@@ -1,0 +1,408 @@
+﻿import { lazy, Suspense } from "react";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+
+import ProtectedRoute from "./shared/components/ProtectedRoute";
+import GlobalNetworkLoadingIndicator from "./shared/components/GlobalNetworkLoadingIndicator";
+import DeliveryMessages from "./shared/components/DeliveryMessages";
+import { isBuyerSession } from "./shared/utils/buyerAccess";
+
+// â”€â”€ AUTH â”€â”€
+import Login from "./auth/pages/BuyerLogin";
+import AdminLogin from "./auth/pages/AdminLogin";
+import Register from "./auth/pages/Register";
+import EmailVerification from "./auth/pages/EmailVerification";
+import DocumentCorrection from "./auth/pages/DocumentCorrection";
+import RegistrationChoice from "./auth/pages/RegistrationChoice";
+import PasswordRecovery from "./auth/pages/PasswordRecovery";
+import PolicyPage from "./shared/pages/PolicyPage";
+
+// â”€â”€ ADMIN â”€â”€
+import AdminLayout from "./admin/layouts/AdminLayout";
+import AdminDashboard from "./admin/pages/Dashboard/Dashboard";
+import Registrations from "./admin/pages/registrations/Registrations";
+import AdminUsers from "./admin/pages/Users/Users";
+import AdminComplaints from "./admin/pages/Complaints/Complaints";
+import AdminReports from "./admin/pages/Reports/Reports";
+import AdminSettings from "./admin/pages/Settings/Settings";
+import AccountSettings from "./admin/pages/AccountSettings/AccountSettings";
+import AdminChat from "./admin/pages/Chat/Chat";
+import AdminRefundRequests from "./admin/pages/RefundRequests/RefundRequests";
+import AdminFinance from "./admin/pages/Finance/Finance";
+import AdminParcelFlow from "./admin/pages/ParcelFlow/ParcelFlow";
+import HubStaffManagement from "./admin/pages/HubStaff/HubStaffManagement";
+import SellerCompliance from "./admin/pages/SellerCompliance/SellerCompliance";
+
+// â”€â”€ BUYER â”€â”€
+const BuyerHome = lazy(() => import("./buyer/pages/Home/Home"));
+import BuyerCart from "./buyer/pages/Cart/Cart";
+import BuyerCategories from "./buyer/pages/Categories/Categories";
+import BuyerChat from "./buyer/pages/Chat/Chat";
+import SellerChatRedirect from "./buyer/pages/Chat/SellerChatRedirect";
+import BuyerCheckout from "./buyer/pages/Checkout/Checkout";
+import BuyerOrderDetails from "./buyer/pages/OrderDetails/OrderDetails";
+import BuyerOrders from "./buyer/pages/Orders/Orders";
+import BuyerProductDetails from "./buyer/pages/ProductDetails/ProductDetails";
+import BuyerReviews from "./buyer/pages/Reviews/Reviews";
+import BuyerAccount from "./buyer/pages/Account/Account";
+import BuyerVouchers from "./buyer/pages/Vouchers/Vouchers";
+import BuyerLayout from "./buyer/layouts/BuyerLayout";
+import BuyerWishlist from "./buyer/pages/Wishlist/Wishlist";
+import PublicStorefront from "./buyer/pages/Storefront";
+
+// â”€â”€ SELLER â”€â”€
+import SellerLayout from "./seller/layouts/SellerLayout";
+import SellerDashboard from "./seller/pages/Dashboard";
+import SellerStorefront from "./seller/pages/Storefront";
+import SellerInventory from "./seller/pages/Inventory";
+import SellerVouchers from "./seller/pages/Vouchers";
+import SellerOrders from "./seller/pages/Orders";
+import SellerLogistics from "./seller/pages/Logistics";
+import SellerFeedback from "./seller/pages/Feedback";
+import SellerReports from "./seller/pages/Reports";
+import SellerReturns from "./seller/pages/Returns";
+import SellerChat from "./seller/pages/Chat";
+import SellerAccountSettings from "./seller/pages/AccountSettings";
+import AdminVouchers from "./admin/pages/Vouchers/Vouchers";
+import LogisticsLayout from "./logistics/layouts/LogisticsLayout";
+import LogisticsDashboard from "./logistics/pages/Dashboard";
+import LogisticsReports from "./logistics/pages/Reports";
+import RiderManagement from "./logistics/pages/RiderManagement";
+import ParcelOperations from "./logistics/pages/ParcelOperations";
+import LogisticsProfile from "./logistics/pages/Profile";
+import LogisticsAccountSettings from "./logistics/pages/AccountSettings";
+const HubStaffLayout = lazy(() => import("./hubStaff/HubStaffLayout"));
+const HubStaffOverview = lazy(() => import("./hubStaff/pages/Overview"));
+const HubStaffParcels = lazy(() => import("./hubStaff/pages/Parcels"));
+const HubStaffPickupReceiving = lazy(() => import("./hubStaff/pages/PickupReceiving"));
+const HubStaffIncomingTransfers = lazy(() => import("./hubStaff/pages/IncomingTransfers"));
+const HubStaffOutgoingTransfers = lazy(() => import("./hubStaff/pages/OutgoingTransfers"));
+const HubStaffActivity = lazy(() => import("./hubStaff/pages/Activity"));
+
+
+function App() {
+    return (
+        <BrowserRouter>
+            <GlobalNetworkLoadingIndicator />
+            <Routes>
+
+                {/* =====================================================
+                    AUTHENTICATION
+                   ===================================================== */}
+
+                <Route path="/login" element={<Login />} />
+                <Route path="/forgot-password" element={<PasswordRecovery />} />
+                <Route path="/reset-password" element={<PasswordRecovery reset />} />
+                <Route path="/admin/login" element={<AdminLogin />} />
+
+                <Route path="/register" element={<RegistrationChoice />} />
+                <Route path="/register/:role" element={<Register />} />
+                <Route path="/verify-email" element={<EmailVerification />} />
+                <Route path="/application/document-correction" element={<DocumentCorrection />} />
+
+                <Route
+                    path="/seller-register"
+                    element={
+                        <Navigate
+                            to="/register"
+                            replace
+                        />
+                    }
+                />
+
+                {/* =====================================================
+                    BUYER / PUBLIC STOREFRONT
+                ===================================================== */}
+
+                <Route element={<BuyerLayout />}>
+
+                    <Route path="/terms" element={<PolicyPage type="terms" />} />
+                    <Route path="/privacy" element={<PolicyPage type="privacy" />} />
+                    <Route path="/delivery-and-payments" element={<PolicyPage type="delivery" />} />
+
+                    {/* PUBLIC / GUEST */}
+
+                    <Route
+                        path="/"
+                        element={isBuyerSession() ? <Navigate to="/shop" replace /> : <Suspense fallback={<div className="app-route-loading" role="status"><span className="app-route-loading__mark"><img src="/cryma-logo.png" alt="" /></span><span>Loading CRYMA…</span></div>}><BuyerHome /></Suspense>}
+                    />
+
+                    <Route
+                        path="/shop"
+                        element={<BuyerCategories />}
+                    />
+
+                    <Route path="/stores/:slug" element={<PublicStorefront />} />
+
+                    <Route
+                        path="/products/:id"
+                        element={<BuyerProductDetails />}
+                    />
+
+
+
+                    {/* BUYER AUTHENTICATED */}
+
+                    <Route
+                        element={
+                            <ProtectedRoute
+                                allowedRoles={["buyer"]}
+                            />
+                        }
+                    >
+                        <Route
+                            path="/cart"
+                            element={<BuyerCart />}
+                        />
+
+                        <Route
+                            path="/checkout"
+                            element={<BuyerCheckout />}
+                        />
+
+                        <Route
+                            path="/orders"
+                            element={<BuyerOrders />}
+                        />
+
+                        <Route
+                            path="/orders/:id"
+                            element={<BuyerOrderDetails />}
+                        />
+
+                        <Route
+                            path="/reviews"
+                            element={<BuyerReviews />}
+                        />
+
+                        <Route
+                            path="/account"
+                            element={<BuyerAccount />}
+                        />
+
+                        <Route
+                            path="/buyer/vouchers"
+                            element={<BuyerVouchers />}
+                        />
+
+                        <Route
+                            path="/wishlist"
+                            element={<BuyerWishlist />}
+                        />
+
+                        <Route
+                            path="/buyer/chat"
+                            element={<SellerChatRedirect />}
+                        />
+
+                        <Route
+                            path="/buyer/support"
+                            element={<BuyerChat key="customer-support" supportOnly />}
+                        />
+
+                    </Route>
+
+                </Route>
+
+                {/* =====================================================
+                    ADMIN - ADMIN ONLY
+                   ===================================================== */}
+
+                <Route element={<ProtectedRoute allowedRoles={["admin"]} />}>
+
+                    <Route path="/admin" element={<AdminLayout />}>
+
+                        <Route
+                            index
+                            element={
+                                <Navigate
+                                    to="/admin/dashboard"
+                                    replace
+                                />
+                            }
+                        />
+
+                        <Route
+                            path="dashboard"
+                            element={<AdminDashboard />}
+                        />
+
+                        <Route
+                            path="registrations"
+                            element={<Registrations />}
+                        />
+
+                        <Route
+                            path="users"
+                            element={<AdminUsers />}
+                        />
+
+                        <Route path="vouchers" element={<AdminVouchers />} />
+
+                        <Route
+                            path="seller-compliance"
+                            element={<SellerCompliance />}
+                        />
+
+                        <Route
+                            path="complaints"
+                            element={<AdminComplaints />}
+                        />
+
+                        <Route path="refund-requests" element={<AdminRefundRequests />} />
+                        <Route path="settlements" element={<Navigate to="/admin/finance?view=settlements" replace />} />
+                        <Route path="parcel-flow" element={<AdminParcelFlow />} />
+                        <Route path="hub-staff" element={<HubStaffManagement />} />
+
+                        <Route path="commission" element={<Navigate to="/admin/finance?view=commission" replace />} />
+                        <Route path="finance" element={<AdminFinance />} />
+
+                        <Route
+                            path="reports"
+                            element={<AdminReports />}
+                        />
+
+                        <Route
+                            path="settings"
+                            element={<AdminSettings />}
+                        />
+
+                        <Route
+                            path="account-settings"
+                            element={<AccountSettings />}
+                        />
+
+                        <Route
+                            path="chat"
+                            element={<AdminChat />}
+                        />
+
+                    </Route>
+
+                </Route>
+
+                {/* =====================================================
+                    SELLER - SELLER ONLY
+                   ===================================================== */}
+
+                <Route element={<ProtectedRoute allowedRoles={["seller"]} />}>
+
+                    <Route
+                        path="/seller"
+                        element={<SellerLayout />}
+                    >
+
+                        <Route
+                            index
+                            element={
+                                <Navigate
+                                    to="/seller/dashboard"
+                                    replace
+                                />
+                            }
+                        />
+
+                        <Route
+                            path="dashboard"
+                            element={<SellerDashboard />}
+                        />
+
+                        <Route
+                            path="inventory"
+                            element={<SellerInventory />}
+                        />
+
+                        <Route path="vouchers" element={<SellerVouchers />} />
+
+                        <Route
+                            path="storefront"
+                            element={<SellerStorefront />}
+                        />
+
+                        <Route
+                            path="orders"
+                            element={<SellerOrders />}
+                        />
+
+                        <Route
+                            path="logistics"
+                            element={<SellerLogistics />}
+                        />
+
+                        <Route
+                            path="feedback"
+                            element={<SellerFeedback />}
+                        />
+
+                        <Route
+                            path="reports"
+                            element={<SellerReports />}
+                        />
+
+                        <Route path="earnings" element={<Navigate to="/seller/reports?view=earnings" replace />} />
+                        <Route path="returns" element={<SellerReturns />} />
+
+                        <Route
+                            path="chat"
+                            element={<SellerChat />}
+                        />
+                        <Route path="delivery-chats" element={<DeliveryMessages mode="seller" />} />
+
+                        <Route
+                            path="account-settings"
+                            element={<SellerAccountSettings />}
+                        />
+
+                    </Route>
+
+                </Route>
+
+                {/* LOGISTICS / SORTING CENTER - LOGISTICS ONLY */}
+                <Route element={<ProtectedRoute allowedRoles={["logistics"]} />}>
+                    <Route path="/logistics" element={<LogisticsLayout />}>
+                        <Route index element={<Navigate to="/logistics/dashboard" replace />} />
+                        <Route path="dashboard" element={<LogisticsDashboard />} />
+                        <Route path="riders" element={<RiderManagement />} />
+                        <Route path="pickups" element={<ParcelOperations section="pickups" />} />
+                        <Route path="incoming-parcels" element={<ParcelOperations section="incoming" />} />
+                        <Route path="sorting" element={<ParcelOperations section="sorting" />} />
+                        <Route path="parcel-flow" element={<AdminParcelFlow base="/logistics" />} />
+                        <Route path="hub-staff" element={<HubStaffManagement base="/logistics" />} />
+                        <Route path="delivery-assignment" element={<ParcelOperations section="assignment" />} />
+                        <Route path="delivery-monitoring" element={<ParcelOperations section="monitoring" />} />
+                        <Route path="reports" element={<LogisticsReports />} />
+                        <Route path="messages" element={<DeliveryMessages mode="logistics" />} />
+                        <Route path="profile" element={<LogisticsProfile />} />
+                        <Route path="settings" element={<LogisticsAccountSettings />} />
+                        <Route path="account" element={<Navigate to="/logistics/profile" replace />} />
+                    </Route>
+                </Route>
+
+                {/* HUB STAFF - HUB-SCOPED OPERATIONS ONLY */}
+                <Route element={<ProtectedRoute allowedRoles={["hub_staff"]} />}>
+                    <Route path="/hub-staff" element={<Suspense fallback={<div className="app-route-loading" role="status">Loading Hub Staff workspace…</div>}><HubStaffLayout /></Suspense>}>
+                        <Route index element={<Navigate to="/hub-staff/overview" replace />} />
+                        <Route path="overview" element={<HubStaffOverview />} />
+                        <Route path="parcels" element={<HubStaffParcels />} />
+                        <Route path="pickup-receiving" element={<HubStaffPickupReceiving />} />
+                        <Route path="incoming-transfers" element={<HubStaffIncomingTransfers />} />
+                        <Route path="outgoing-transfers" element={<HubStaffOutgoingTransfers />} />
+                        <Route path="activity" element={<HubStaffActivity />} />
+                        <Route path="messages" element={<DeliveryMessages mode="hubStaff" />} />
+                    </Route>
+                </Route>
+
+                {/* =====================================================
+                    FALLBACK
+                   ===================================================== */}
+
+                <Route
+                    path="*"
+                    element={<Navigate to="/" replace />}
+                />
+
+            </Routes>
+        </BrowserRouter>
+    );
+}
+
+export default App;

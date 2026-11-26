@@ -1,0 +1,345 @@
+import { useEffect, useRef, useState } from "react";
+import { ImagePlus } from "lucide-react";
+import api from "../../shared/services/api";
+import { formatStatusLabel } from "../../shared/utils/statusLabel";
+
+function SellerAccountSettings() {
+    const [user, setUser] = useState(null);
+    const [profileForm, setProfileForm] = useState({ first_name: "", last_name: "", email: "", phone: "" });
+    const [passwordForm, setPasswordForm] = useState({ current_password: "", password: "", password_confirmation: "" });
+    const [loading, setLoading] = useState(true);
+    const [savingProfile, setSavingProfile] = useState(false);
+    const [savingPassword, setSavingPassword] = useState(false);
+    const [profileMsg, setProfileMsg] = useState("");
+    const [passwordMsg, setPasswordMsg] = useState("");
+    const [error, setError] = useState("");
+    const [profilePhotoUrl, setProfilePhotoUrl] = useState("");
+    const [profilePhotoPreview, setProfilePhotoPreview] = useState("");
+    const [profilePhotoFile, setProfilePhotoFile] = useState(null);
+    const [profilePhotoError, setProfilePhotoError] = useState("");
+    const profilePhotoPreviewRef = useRef("");
+    const [pickupRegions, setPickupRegions] = useState([]);
+    const [pickupAddress, setPickupAddress] = useState({
+        recipient_name: "",
+        phone: "",
+        region: "",
+        province: "",
+        municipality: "",
+        barangay: "",
+        street: "",
+        house_number: "",
+        building_name: "",
+        unit_number: "",
+        postal_code: "",
+    });
+    const [savingPickup, setSavingPickup] = useState(false);
+    const [pickupMessage, setPickupMessage] = useState("");
+    const [pickupError, setPickupError] = useState("");
+
+    useEffect(() => {
+        Promise.all([api.get("/user"), api.get("/seller/pickup-address")]).then(([userResponse, pickupResponse]) => {
+            const u = userResponse.data.user;
+            setUser(u);
+            setProfileForm({ first_name: u.first_name || "", last_name: u.last_name || "", email: u.email || "", phone: u.phone || "" });
+            const pickupData = pickupResponse.data?.data || {};
+            setPickupRegions(Array.isArray(pickupData.regions) ? pickupData.regions : []);
+            if (pickupData.address) {
+                setPickupAddress((current) => ({ ...current, ...pickupData.address }));
+            }
+        }).catch(() => setError("Unable to load account information."))
+          .finally(() => setLoading(false));
+    }, []);
+
+    useEffect(() => {
+        if (!user?.profile_image_path) {
+            return undefined;
+        }
+        let active = true;
+        let objectUrl = "";
+        api.get("/account/profile-image", { responseType: "blob" }).then(({ data }) => {
+            if (!data?.size) return;
+            objectUrl = URL.createObjectURL(data);
+            if (!active) { URL.revokeObjectURL(objectUrl); return; }
+            setProfilePhotoUrl(objectUrl);
+        }).catch(() => { if (active) setProfilePhotoUrl(""); });
+        return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+    }, [user?.profile_image_path]);
+
+    useEffect(() => () => {
+        if (profilePhotoPreviewRef.current) URL.revokeObjectURL(profilePhotoPreviewRef.current);
+    }, []);
+
+    const setP = (e) => setProfileForm((f) => ({ ...f, [e.target.name]: e.target.value }));
+    const setPw = (e) => setPasswordForm((f) => ({ ...f, [e.target.name]: e.target.value }));
+    const setPickup = (event) => setPickupAddress((current) => ({ ...current, [event.target.name]: event.target.value }));
+
+    const savePickupAddress = async (event) => {
+        event.preventDefault();
+        setPickupError("");
+        setPickupMessage("");
+        setSavingPickup(true);
+        try {
+            const response = await api.put("/seller/pickup-address", pickupAddress);
+            setPickupAddress((current) => ({ ...current, ...response.data.data }));
+            setPickupMessage("Pickup address saved.");
+        } catch (requestError) {
+            const errors = requestError.response?.data?.errors || {};
+            setPickupError(Object.values(errors).flat()[0] || requestError.response?.data?.message || "Unable to save the pickup address.");
+        } finally {
+            setSavingPickup(false);
+        }
+    };
+
+    const chooseProfilePhoto = (event) => {
+        const file = event.target.files?.[0] || null;
+        event.target.value = "";
+        setProfilePhotoError("");
+        if (!file) return;
+        if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+            setProfilePhotoError("Choose a JPG, PNG, or WebP image.");
+            return;
+        }
+        if (file.size > 2 * 1024 * 1024) {
+            setProfilePhotoError("The profile photo must be 2 MB or smaller.");
+            return;
+        }
+        if (profilePhotoPreviewRef.current) URL.revokeObjectURL(profilePhotoPreviewRef.current);
+        const preview = URL.createObjectURL(file);
+        profilePhotoPreviewRef.current = preview;
+        setProfilePhotoPreview(preview);
+        setProfilePhotoFile(file);
+    };
+
+    const saveProfile = async (e) => {
+        e.preventDefault();
+        setError(""); setProfileMsg(""); setSavingProfile(true);
+        try {
+            let response;
+            if (profilePhotoFile) {
+                const payload = new FormData();
+                payload.append("first_name", profileForm.first_name);
+                payload.append("last_name", profileForm.last_name);
+                payload.append("phone", profileForm.phone || "");
+                payload.append("profile_image", profilePhotoFile);
+                payload.append("_method", "PATCH");
+                response = await api.post("/account/profile", payload);
+            } else {
+                response = await api.patch("/account/profile", {
+                    first_name: profileForm.first_name,
+                    last_name: profileForm.last_name,
+                    phone: profileForm.phone || null,
+                });
+            }
+            const updated = { ...user, ...response.data.data, ...profileForm };
+            setUser(updated);
+            localStorage.setItem("user", JSON.stringify(updated));
+            window.dispatchEvent(new Event("cryma-user-updated"));
+            setProfilePhotoFile(null);
+            setProfilePhotoPreview("");
+            if (profilePhotoPreviewRef.current) URL.revokeObjectURL(profilePhotoPreviewRef.current);
+            profilePhotoPreviewRef.current = "";
+            setProfileMsg("Profile updated successfully.");
+        } catch (err) {
+            setError(err.response?.data?.message || "Unable to update profile.");
+        } finally { setSavingProfile(false); }
+    };
+
+    const savePassword = async (e) => {
+        e.preventDefault();
+        setError(""); setPasswordMsg("");
+        if (passwordForm.password !== passwordForm.password_confirmation) {
+            setError("Passwords do not match."); return;
+        }
+        setSavingPassword(true);
+        try {
+            await api.patch("/account/password", passwordForm);
+            setPasswordForm({ current_password: "", password: "", password_confirmation: "" });
+            setPasswordMsg("Password changed successfully.");
+        } catch (err) {
+            setError(err.response?.data?.message || "Unable to change password.");
+        } finally { setSavingPassword(false); }
+    };
+
+    if (loading) return <div className="sl-page"><p style={{ color: "#718180" }}>Loading…</p></div>;
+
+    const initials = `${profileForm.first_name?.[0] ?? ""}${profileForm.last_name?.[0] ?? ""}`.toUpperCase();
+
+    return (
+        <div className="sl-page sl-account-settings">
+            <div className="sl-page-head">
+                <div>
+                    <div className="sl-eyebrow">PROFILE</div>
+                    <h1 className="sl-h1">Account Settings</h1>
+                    <p>Manage your seller profile and account security.</p>
+                </div>
+            </div>
+
+            {error && <div className="auth-notice auth-notice--error" style={{ marginBottom: 20 }}>{error}</div>}
+
+            <div className="sl-account-columns">
+            <div className="sl-account-column">
+            {/* PROFILE */}
+            <div className="sl-card sl-account-card sl-account-profile-card">
+                <div className="sl-panel-head">
+                    <div><h3>Personal Information</h3><p>Update your seller profile details</p></div>
+                </div>
+                <form className="sl-account-form" onSubmit={saveProfile}>
+                    <div className="sl-profile-photo-control">
+                        <div className="sl-profile-photo-preview">{(profilePhotoPreview || profilePhotoUrl) ? <img src={profilePhotoPreview || profilePhotoUrl} alt="" /> : initials}</div>
+                        <div className="sl-profile-photo-copy"><strong>Profile photo</strong><span>JPG, PNG, or WebP · up to 2 MB</span>
+                            <label className="sl-profile-photo-button" htmlFor="seller-profile-photo"><ImagePlus size={15} />{profilePhotoFile ? "Choose a different photo" : "Upload photo"}</label>
+                            <input id="seller-profile-photo" type="file" accept="image/jpeg,image/png,image/webp" onChange={chooseProfilePhoto} />
+                            {profilePhotoError && <small className="sl-field-error" role="alert">{profilePhotoError}</small>}
+                        </div>
+                    </div>
+                    <div className="sl-form-row">
+                        <div className="sl-field">
+                            <label htmlFor="seller-first-name">First Name</label>
+                            <input id="seller-first-name" name="first_name" value={profileForm.first_name} onChange={setP} maxLength={30} required />
+                        </div>
+                        <div className="sl-field">
+                            <label htmlFor="seller-last-name">Last Name</label>
+                            <input id="seller-last-name" name="last_name" value={profileForm.last_name} onChange={setP} maxLength={30} required />
+                        </div>
+                    </div>
+                    <div className="sl-form-row">
+                        <div className="sl-field">
+                            <label htmlFor="seller-account-email">Email Address</label>
+                            <input id="seller-account-email" name="email" type="email" value={profileForm.email} readOnly aria-describedby="seller-email-help" />
+                            <small id="seller-email-help">Email changes require a separate verification flow.</small>
+                        </div>
+                        <div className="sl-field">
+                            <label htmlFor="seller-account-phone">Contact No.</label>
+                            <input id="seller-account-phone" name="phone" type="tel" value={profileForm.phone} onChange={setP} maxLength={13} placeholder="+639XXXXXXXXX" />
+                        </div>
+                    </div>
+                    {profileMsg && <div className="auth-notice auth-notice--success" style={{ marginBottom: 12 }}>{profileMsg}</div>}
+                    <button className="sl-btn-primary" type="submit" disabled={savingProfile}>
+                        {savingProfile ? "Saving…" : "Save Changes"}
+                    </button>
+                </form>
+            </div>
+            {/* PASSWORD */}
+            <div className="sl-card sl-account-card sl-account-password-card">
+                <div className="sl-panel-head">
+                    <div><h3>Change Password</h3><p>Keep your account secure</p></div>
+                </div>
+                <form className="sl-account-form" onSubmit={savePassword}>
+                    <div className="sl-field sl-account-current-password">
+                        <label>Current Password</label>
+                        <input name="current_password" type="password" value={passwordForm.current_password} onChange={setPw} maxLength={128} required />
+                    </div>
+                    <div className="sl-form-row">
+                        <div className="sl-field">
+                            <label>New Password</label>
+                            <input name="password" type="password" value={passwordForm.password} onChange={setPw} minLength={8} maxLength={128} required />
+                        </div>
+                        <div className="sl-field">
+                            <label>Confirm Password</label>
+                            <input name="password_confirmation" type="password" value={passwordForm.password_confirmation} onChange={setPw} minLength={8} maxLength={128} required />
+                        </div>
+                    </div>
+                    {passwordMsg && <div className="auth-notice auth-notice--success" style={{ marginBottom: 12 }}>{passwordMsg}</div>}
+                    <button className="sl-btn-primary" type="submit" disabled={savingPassword}>
+                        {savingPassword ? "Updating…" : "Change Password"}
+                    </button>
+                </form>
+            </div>
+            </div>
+            <div className="sl-account-column">
+
+            <div className="sl-card sl-account-card">
+                <div className="sl-panel-head">
+                    <div><h3>Seller Pickup Address</h3><p>Used to calculate the shipping origin zone. This is separate from buyer delivery addresses.</p></div>
+                </div>
+                {pickupError && <div className="auth-notice auth-notice--error" role="alert" style={{ margin: "0 20px 14px" }}>{pickupError}</div>}
+                <form className="sl-account-form" onSubmit={savePickupAddress}>
+                    <div className="sl-form-row">
+                        <div className="sl-field">
+                            <label htmlFor="seller-pickup-recipient">Pickup contact</label>
+                            <input id="seller-pickup-recipient" name="recipient_name" value={pickupAddress.recipient_name} onChange={setPickup} maxLength={120} required />
+                        </div>
+                        <div className="sl-field">
+                            <label htmlFor="seller-pickup-phone">Contact number</label>
+                            <input id="seller-pickup-phone" name="phone" type="tel" value={pickupAddress.phone} onChange={setPickup} maxLength={13} placeholder="09XXXXXXXXX" required />
+                        </div>
+                    </div>
+                    <div className="sl-form-row">
+                        <div className="sl-field">
+                            <label htmlFor="seller-pickup-region">Region</label>
+                            <select id="seller-pickup-region" name="region" value={pickupAddress.region} onChange={setPickup} required>
+                                <option value="">Select a region</option>
+                                {pickupRegions.map((region) => <option value={region} key={region}>{region}</option>)}
+                            </select>
+                        </div>
+                        <div className="sl-field">
+                            <label htmlFor="seller-pickup-province">Province</label>
+                            <input id="seller-pickup-province" name="province" value={pickupAddress.province} onChange={setPickup} maxLength={160} required />
+                        </div>
+                    </div>
+                    <div className="sl-form-row">
+                        <div className="sl-field">
+                            <label htmlFor="seller-pickup-municipality">City / Municipality</label>
+                            <input id="seller-pickup-municipality" name="municipality" value={pickupAddress.municipality} onChange={setPickup} maxLength={160} required />
+                        </div>
+                        <div className="sl-field">
+                            <label htmlFor="seller-pickup-barangay">Barangay</label>
+                            <input id="seller-pickup-barangay" name="barangay" value={pickupAddress.barangay} onChange={setPickup} maxLength={160} required />
+                        </div>
+                    </div>
+                    <div className="sl-form-row">
+                        <div className="sl-field">
+                            <label htmlFor="seller-pickup-house">House number</label>
+                            <input id="seller-pickup-house" name="house_number" value={pickupAddress.house_number} onChange={setPickup} maxLength={80} required />
+                        </div>
+                        <div className="sl-field">
+                            <label htmlFor="seller-pickup-street">Street</label>
+                            <input id="seller-pickup-street" name="street" value={pickupAddress.street} onChange={setPickup} maxLength={255} required />
+                        </div>
+                    </div>
+                    <div className="sl-form-row">
+                        <div className="sl-field">
+                            <label htmlFor="seller-pickup-building">Building <small>(optional)</small></label>
+                            <input id="seller-pickup-building" name="building_name" value={pickupAddress.building_name || ""} onChange={setPickup} maxLength={160} />
+                        </div>
+                        <div className="sl-field">
+                            <label htmlFor="seller-pickup-unit">Unit <small>(optional)</small></label>
+                            <input id="seller-pickup-unit" name="unit_number" value={pickupAddress.unit_number || ""} onChange={setPickup} maxLength={80} />
+                        </div>
+                    </div>
+                    <div className="sl-field">
+                        <label htmlFor="seller-pickup-postal">Postal code</label>
+                        <input id="seller-pickup-postal" name="postal_code" inputMode="numeric" value={pickupAddress.postal_code} onChange={setPickup} maxLength={4} pattern="[0-9]{4}" required />
+                    </div>
+                    {pickupMessage && <div className="auth-notice auth-notice--success" role="status">{pickupMessage}</div>}
+                    <button className="sl-btn-primary" type="submit" disabled={savingPickup || pickupRegions.length === 0}>
+                        {savingPickup ? "Saving…" : "Save Pickup Address"}
+                    </button>
+                </form>
+            </div>
+
+            {/* ACCOUNT INFO */}
+            <div className="sl-card sl-account-card sl-account-info-card">
+                <div className="sl-panel-head">
+                    <div><h3>Account Information</h3><p>Seller account details and current status</p></div>
+                </div>
+                <div className="sl-account-info-grid">
+                    {[
+                        { label: "Role", value: "Seller" },
+                        { label: "Status", value: formatStatusLabel(user?.status, "—") },
+                        { label: "Email", value: user?.email ?? "—" },
+                    ].map(({ label, value }) => (
+                        <div className="sl-account-info-item" key={label}>
+                            <p className="sl-account-info-label">{label}</p>
+                            <p className="sl-account-info-value">{value}</p>
+                        </div>
+                    ))}
+                </div>
+            </div>
+            </div>
+            </div>
+        </div>
+    );
+}
+
+export default SellerAccountSettings;

@@ -1,0 +1,92 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+
+class Order extends Model
+{
+    protected $hidden = [
+        'checkout_idempotency_key',
+        'checkout_request_hash',
+    ];
+
+    protected $fillable = [
+        'buyer_id',
+        'checkout_group_id',
+        'delivery_address',
+        'delivery_psgc_code',
+        'payment_method',
+        'subtotal',
+        'shipping_fee',
+        'total_amount',
+        'voucher_id',
+        'voucher_code',
+        'voucher_discount',
+        'shipping_voucher_id',
+        'shipping_voucher_code',
+        'shipping_voucher_discount',
+        'status',
+        'checkout_idempotency_key',
+        'checkout_request_hash',
+    ];
+
+    public function buyer()
+    {
+        return $this->belongsTo(User::class, 'buyer_id');
+    }
+
+    public function items()
+    {
+        return $this->hasMany(OrderItem::class);
+    }
+
+    public function checkoutGroup()
+    {
+        return $this->belongsTo(CheckoutGroup::class);
+    }
+
+    public function shippingCharge()
+    {
+        return $this->hasOne(OrderShippingCharge::class);
+    }
+
+    public function codCollection(): HasOne { return $this->hasOne(CodCollection::class); }
+
+    public function commissions(): HasMany
+    {
+        return $this->hasMany(Commission::class);
+    }
+
+    public function commission()
+    {
+        return $this->hasOne(Commission::class);
+    }
+
+    public function voucherRedemptions(): HasMany
+    {
+        return $this->hasMany(VoucherRedemption::class);
+    }
+
+    public function delivery(): HasOne
+    {
+        return $this->hasOne(Delivery::class);
+    }
+
+    public function pickupAssignment(): HasOne
+    {
+        return $this->hasOne(PickupAssignment::class);
+    }
+
+    public function refundRequests(): HasMany
+    {
+        return $this->hasMany(RefundRequest::class);
+    }
+
+    public function latestRefundRequest(): HasOne
+    {
+        return $this->hasOne(RefundRequest::class)->latestOfMany();
+    }
+}

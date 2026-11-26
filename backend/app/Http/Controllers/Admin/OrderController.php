@@ -1,0 +1,177 @@
+<?php
+
+namespace App\Http\Controllers\Admin;
+
+use App\Http\Controllers\Controller;
+use App\Models\Commission;
+use App\Models\CodCollection;
+use App\Models\Order;
+use App\Models\Product;
+use App\Models\VoucherRedemption;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+
+class OrderController extends Controller
+{
+    /**
+     * Display all orders.
+     */
+    public function index(Request $request)
+    {
+        $query = Order::with([
+            'buyer',
+            'items.product',
+            'items.seller',
+            'delivery.events.actor',
+            'delivery.pickupAssignment.courierProfile.user',
+            'delivery.deliveryArea',
+        ]);
+
+        // Search by order ID or buyer information
+        if ($request->filled('search')) {
+            $search = $request->search;
+
+            $query->where(function ($q) use ($search) {
+                $q->where('id', 'like', "%{$search}%")
+                    ->orWhereHas('buyer', function ($buyerQuery) use ($search) {
+                        $buyerQuery
+                            ->where('first_name', 'like', "%{$search}%")
+                            ->orWhere('last_name', 'like', "%{$search}%")
+                            ->orWhere('email', 'like', "%{$search}%");
+                    });
+            });
+        }
+
+        // Filter by order status
+        if ($request->filled('status') && $request->status !== 'all') {
+            $query->where('status', $request->status);
+        }
+
+        if ($request->filled('date')) {
+            $validated = $request->validate(['date' => ['date_format:Y-m-d']]);
+            $query->whereDate('created_at', $validated['date']);
+        }
+
+        $orders = $query
+            ->latest()
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'data' => $orders,
+        ]);
+    }
+
+    /**
+     * Display a specific order.
+     */
+    public function show($id)
+    {
+        $order = Order::with([
+            'buyer',
+            'items.product',
+            'items.seller',
+            'commission',
+            'delivery.events.actor',
+            'delivery.courierProfile.user',
+            'delivery.pickupAssignment.courierProfile.user',
+            'delivery.deliveryArea',
+        ])->find($id);
+
+        if (!$order) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Order not found.',
+            ], 404);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $order,
+        ]);
+    }
+
+    /**
+     * Update order status.
+     */
+    public function updateStatus(Request $request, $id)
+    {
+        if (is_string($request->input('status'))) {
+            $request->merge(['status' => mb_strtoupper(trim($request->input('status')))]);
+        }
+
+        $validated = $request->validate([
+            'status' => [
+                'required',
+                'in:PENDING,PLACED,CONFIRMED,PREPARING,READY_FOR_PICKUP,CANCELLED',
+            ],
+        ]);
+
+        $order = DB::transaction(function () use ($id, $validated) {
+            $order = Order::with('items')->whereKey($id)->lockForUpdate()->firstOrFail();
+            if ($order->delivery()->exists()) {
+                abort(409, 'This order has delivery history. Use the logistics workflow to preserve assignment and status history.');
+            }
+            $currentStatus = strtoupper((string) $order->status);
+            if ($currentStatus === 'CANCELLED' && $validated['status'] !== 'CANCELLED') {
+                abort(409, 'A cancelled order cannot be reopened.');
+            }
+            if ($currentStatus !== 'CANCELLED' && $validated['status'] === 'CANCELLED') {
+                $this->restoreOrderStock($order);
+                // Cancel associated financial records and reverse the voucher redemption.
+                Commission::where('order_id', $order->id)->whereIn('status', ['pending', 'available'])->update(['status' => 'cancelled']);
+                CodCollection::where('order_id', $order->id)->where('status', 'awaiting_collection')->update(['status' => 'cancelled']);
+                // Deleting the redemption returns the use count to the voucher.
+                VoucherRedemption::where('order_id', $order->id)->delete();
+            }
+            $order->status = $validated['status'];
+            $order->save();
+            return $order;
+        });
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Order status updated successfully.',
+            'data' => $order,
+        ]);
+    }
+    private function restoreOrderStock(Order $order): void
+    {
+        foreach ($order->items as $item) {
+            $product = Product::whereKey($item->product_id)->lockForUpdate()->first();
+            if (!$product) {
+                continue;
+            }
+
+            $variants = $product->variants ?? [];
+            if ($variants) {
+                $variantIndex = collect($variants)->search(function (array $variant) use ($item): bool {
+                    if (filled($item->variant_id)) {
+                        return (string) ($variant['id'] ?? '') === (string) $item->variant_id;
+                    }
+
+                    return filled($item->variant_label)
+                        && $this->variantLabel($variant) === $item->variant_label;
+                });
+
+                if ($variantIndex === false) {
+                    abort(409, "Cannot cancel order {$order->id}: a variant in the order no longer exists in product {$product->id}.");
+                }
+
+                $variants[$variantIndex]['stock'] = (int) ($variants[$variantIndex]['stock'] ?? 0) + (int) $item->quantity;
+                $product->variants = $variants;
+            }
+
+            $product->stock = (int) $product->stock + (int) $item->quantity;
+            $product->save();
+        }
+    }
+
+    private function variantLabel(array $variant): string
+    {
+        return collect([
+            filled($variant['color'] ?? null) ? 'Color: '.$variant['color'] : null,
+            filled($variant['size'] ?? null) ? 'Size: '.$variant['size'] : null,
+        ])->filter()->implode(' · ');
+    }
+}

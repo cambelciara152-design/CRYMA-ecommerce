@@ -1,0 +1,49 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+
+class OrderItem extends Model
+{
+    protected $fillable = [
+        'order_id',
+        'product_id',
+        'seller_id',
+        'quantity',
+        'unit_price',
+        'subtotal',
+        'unit_weight_kg',
+        'unit_length_cm',
+        'unit_width_cm',
+        'unit_height_cm',
+        'variant_label',
+        'variant_id',
+    ];
+
+    protected function casts(): array
+    {
+        return [
+            'unit_weight_kg' => 'decimal:3',
+            'unit_length_cm' => 'decimal:2',
+            'unit_width_cm' => 'decimal:2',
+            'unit_height_cm' => 'decimal:2',
+        ];
+    }
+
+    public function order(): BelongsTo
+    {
+        return $this->belongsTo(Order::class);
+    }
+
+    public function product(): BelongsTo
+    {
+        return $this->belongsTo(Product::class);
+    }
+
+    public function seller(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'seller_id');
+    }
+}

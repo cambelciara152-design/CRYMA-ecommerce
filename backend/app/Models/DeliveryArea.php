@@ -1,0 +1,34 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+
+class DeliveryArea extends Model
+{
+    protected $fillable = ['name', 'is_active', 'hub_id', 'psgc_code', 'location_label'];
+
+    protected function casts(): array
+    {
+        return ['is_active' => 'boolean'];
+    }
+
+    public function couriers(): BelongsToMany
+    {
+        return $this->belongsToMany(CourierProfile::class, 'courier_delivery_areas')
+            ->withPivot(['assigned_by'])
+            ->withTimestamps();
+    }
+
+    public function deliveries(): HasMany
+    {
+        return $this->hasMany(Delivery::class);
+    }
+
+    public function hub()
+    {
+        return $this->belongsTo(LogisticsHub::class);
+    }
+}

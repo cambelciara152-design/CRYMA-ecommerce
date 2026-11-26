@@ -1,0 +1,1160 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+    ArrowLeft,
+    ArrowUpRight,
+    Clock3,
+    Heart,
+    MessageCircle,
+    Minus,
+    Plus,
+    Play,
+    ShoppingCart,
+    Star,
+} from "lucide-react";
+import {
+    Link,
+    useNavigate,
+    useParams,
+} from "react-router-dom";
+
+import api from "../../../shared/services/api";
+import {
+    getBuyerWishlist,
+    getBuyerCart,
+    isBuyerSession,
+    requestBuyerSignIn,
+    saveBuyerCart,
+    saveBuyerWishlist,
+    showBuyerToast,
+} from "../../../shared/utils/buyerAccess";
+import { addProductToCart, getBuyerCartItemKey } from "../../../shared/utils/buyerProductActions";
+import { formatDeliveryEstimate, getBusinessDayEstimate } from "../../../shared/utils/deliveryEstimate";
+import { getProductShopName } from "../../../shared/utils/productDiscovery";
+
+import "./ProductDetails.css";
+
+const CHECKOUT_ITEMS_KEY = "cryma_checkout_item_ids";
+
+function ProductDetails() {
+    const { id } = useParams();
+    const navigate = useNavigate();
+
+    const [product, setProduct] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState("");
+    const [quantity, setQuantity] = useState(1);
+    const [selectedVariantId, setSelectedVariantId] = useState("");
+    const [saved, setSaved] = useState(false);
+    const [activeMediaIndex, setActiveMediaIndex] = useState(0);
+    const [activeTab, setActiveTab] = useState("Description");
+    const [reviews, setReviews] = useState([]);
+    const [reviewSummary, setReviewSummary] = useState({
+        averageRating: 0,
+        reviewCount: 0,
+    });
+    const [reviewsLoading, setReviewsLoading] =
+        useState(false);
+    const [actionMessage, setActionMessage] = useState("");
+    const [actionMessageType, setActionMessageType] = useState("success");
+    const [deliveryAddresses, setDeliveryAddresses] = useState([]);
+    const [deliveryAddressId, setDeliveryAddressId] = useState("");
+    const [deliveryEstimate, setDeliveryEstimate] = useState(null);
+    const [deliveryAddressLoading, setDeliveryAddressLoading] = useState(false);
+    const [deliveryEstimateLoading, setDeliveryEstimateLoading] = useState(false);
+    const [deliveryEstimateMessage, setDeliveryEstimateMessage] = useState("");
+    const trackedProductId = useRef("");
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const loadProduct = async () => {
+            setLoading(true);
+            setError("");
+
+            try {
+                const response = await api.get(
+                    `/products/${id}`
+                );
+
+                if (!cancelled) {
+                    const loadedProduct = response.data?.data || null;
+                    setProduct(loadedProduct);
+                    const initialVariant = loadedProduct?.variants?.find((variant) => Number(variant.stock) > 0) || loadedProduct?.variants?.[0];
+                    setSelectedVariantId(String(initialVariant?.id || ""));
+                    setQuantity(1);
+                    setActiveMediaIndex(0);
+                }
+            } catch (requestError) {
+                console.error(
+                    "Failed to load product:",
+                    requestError
+                );
+
+                if (!cancelled) {
+                    setError(
+                        requestError.response?.data
+                            ?.message ||
+                            "This product is no longer available."
+                    );
+                }
+            } finally {
+                if (!cancelled) {
+                    setLoading(false);
+                }
+            }
+        };
+
+        loadProduct();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [id]);
+
+    useEffect(() => {
+        if (!product || String(product.id) !== String(id) || trackedProductId.current === String(id)) {
+            return;
+        }
+
+        trackedProductId.current = String(id);
+        api.post(`/products/${encodeURIComponent(id)}/view`)
+            .catch((requestError) => {
+                console.warn("Unable to record product view:", requestError);
+            });
+    }, [id, product]);
+
+    useEffect(() => {
+        const syncSaved = () => {
+            setSaved(getBuyerWishlist().some((savedId) => String(savedId) === String(id)));
+        };
+        syncSaved();
+        window.addEventListener("cryma-wishlist-updated", syncSaved);
+        window.addEventListener("storage", syncSaved);
+        return () => {
+            window.removeEventListener("cryma-wishlist-updated", syncSaved);
+            window.removeEventListener("storage", syncSaved);
+        };
+    }, [id]);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const loadReviews = async () => {
+            if (!id) {
+                return;
+            }
+
+            setReviewsLoading(true);
+
+            try {
+                const response = await api.get(
+                    `/products/${id}/reviews`
+                );
+
+                const data =
+                    response.data?.data || {};
+
+                if (!cancelled) {
+                    setReviews(
+                        Array.isArray(data.reviews)
+                            ? data.reviews
+                            : []
+                    );
+
+                    setReviewSummary({
+                        averageRating: Number(
+                            data.average_rating || 0
+                        ),
+                        reviewCount: Number(
+                            data.review_count || 0
+                        ),
+                    });
+                }
+            } catch (requestError) {
+                console.error(
+                    "Failed to load product reviews:",
+                    requestError
+                );
+
+                if (!cancelled) {
+                    setReviews([]);
+                    setReviewSummary({
+                        averageRating: 0,
+                        reviewCount: 0,
+                    });
+                }
+            } finally {
+                if (!cancelled) {
+                    setReviewsLoading(false);
+                }
+            }
+        };
+
+        loadReviews();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [id]);
+
+    const shopName = getProductShopName(product?.seller);
+    const sellerProfile = product?.seller?.seller_profile || product?.seller?.sellerProfile || {};
+    const storeSlug = sellerProfile.store_slug || product?.seller?.store_slug || "";
+    const storeLogo = sellerProfile.store_logo_url || product?.seller?.store_logo_url || "";
+    const sellerOnVacation = product?.seller?.is_on_vacation === true || product?.seller_on_vacation === true;
+
+    const variants = Array.isArray(product?.variants) ? product.variants : [];
+    const selectedVariant = variants.find((variant) => String(variant.id) === selectedVariantId) || variants[0] || null;
+    const price = Number(selectedVariant?.discounted_price || selectedVariant?.price || product?.price || 0);
+    const originalPrice = Number(selectedVariant?.price || product?.original_price || 0);
+    const stock = Number(selectedVariant?.stock ?? product?.stock ?? 0);
+
+    useEffect(() => {
+        if (!product || !isBuyerSession()) {
+            return undefined;
+        }
+
+        let cancelled = false;
+        const timer = window.setTimeout(async () => {
+            setDeliveryAddressLoading(true);
+            setDeliveryEstimateMessage("");
+
+            try {
+                const response = await api.get("/buyer/checkout-data");
+                if (cancelled) return;
+
+                const checkoutData = response.data?.data || {};
+                const addresses = Array.isArray(checkoutData.addresses)
+                    ? checkoutData.addresses
+                    : checkoutData.address
+                        ? [checkoutData.address]
+                        : [];
+                setDeliveryAddresses(addresses);
+                const preferredAddress = addresses.find((address) => address.is_default) || addresses[0];
+                setDeliveryAddressId(preferredAddress ? String(preferredAddress.id) : "");
+                if (!preferredAddress) {
+                    setDeliveryEstimateMessage("Add a saved delivery address to see an estimated arrival date.");
+                }
+            } catch {
+                if (!cancelled) {
+                    setDeliveryAddresses([]);
+                    setDeliveryAddressId("");
+                    setDeliveryEstimateMessage("Unable to load your delivery addresses. Please try again.");
+                }
+            } finally {
+                if (!cancelled) setDeliveryAddressLoading(false);
+            }
+        }, 0);
+
+        return () => {
+            cancelled = true;
+            window.clearTimeout(timer);
+        };
+    }, [product]);
+
+    useEffect(() => {
+        const requestedQuantity = Number(quantity);
+        const canEstimate = product
+            && isBuyerSession()
+            && !deliveryAddressLoading
+            && Boolean(deliveryAddressId)
+            && Number.isInteger(requestedQuantity)
+            && requestedQuantity >= 1
+            && requestedQuantity <= stock;
+
+        let cancelled = false;
+        const timer = window.setTimeout(async () => {
+            setDeliveryEstimate(null);
+            setDeliveryEstimateMessage("");
+            if (!canEstimate) {
+                setDeliveryEstimateLoading(false);
+                return;
+            }
+
+            setDeliveryEstimateLoading(true);
+
+            try {
+                const item = {
+                    product_id: Number(product.id),
+                    quantity: requestedQuantity,
+                };
+                if (selectedVariant?.id) item.variant_id = selectedVariant.id;
+
+                const response = await api.post("/buyer/shipping-quote", {
+                    address_id: Number(deliveryAddressId),
+                    items: [item],
+                });
+                if (cancelled) return;
+
+                const parcel = response.data?.data?.parcels?.[0];
+                const estimate = getBusinessDayEstimate(
+                    Number(parcel?.min_delivery_days),
+                    Number(parcel?.max_delivery_days),
+                );
+                if (!estimate) {
+                    setDeliveryEstimateMessage("An estimated arrival date is not available for this route yet.");
+                    return;
+                }
+                setDeliveryEstimate(estimate);
+            } catch (requestError) {
+                if (cancelled) return;
+                const errors = requestError.response?.data?.errors || {};
+                const validationMessage = Object.values(errors).flat()[0];
+                if (requestError.response?.status === 422 && validationMessage) {
+                    setDeliveryEstimateMessage(
+                        String(validationMessage).includes("route")
+                            ? "An estimated arrival date is not available for this route yet."
+                            : "An estimated arrival date is not available for this item yet.",
+                    );
+                } else {
+                    setDeliveryEstimateMessage("Unable to calculate an estimated arrival date right now.");
+                }
+            } finally {
+                if (!cancelled) setDeliveryEstimateLoading(false);
+            }
+        }, 0);
+
+        return () => {
+            cancelled = true;
+            window.clearTimeout(timer);
+        };
+    }, [deliveryAddressId, deliveryAddressLoading, product, quantity, selectedVariant?.id, stock]);
+
+    const cartQuantity = useMemo(() => {
+        const item = getBuyerCart().find(
+            (cartItem) => getBuyerCartItemKey(cartItem) === getBuyerCartItemKey({
+                id: product?.id,
+                variant_id: selectedVariant?.id,
+            })
+        );
+        return Number(item?.quantity || 0);
+    }, [product?.id, selectedVariant?.id]);
+
+    const showMessage = (message, type = "success") => {
+        setActionMessage(message);
+        setActionMessageType(type);
+
+        window.setTimeout(() => {
+            setActionMessage("");
+        }, 2500);
+    };
+
+    const addToCart = ({
+        redirectToCheckout = false,
+    } = {}) => {
+        if (sellerOnVacation) {
+            showMessage("This seller is on vacation and is not accepting orders.", "error");
+            return;
+        }
+        if (!product || stock <= 0) {
+            return;
+        }
+
+        const requestedQuantity = Number(quantity);
+        if (!Number.isInteger(requestedQuantity) || requestedQuantity < 1) {
+            showMessage("Enter a whole quantity of at least 1.", "error");
+            return;
+        }
+
+        if (!isBuyerSession()) {
+            requestBuyerSignIn({
+                title: "Sign in to add to cart",
+                message: "Create an account or sign in to shop on CRYMA.",
+            });
+            return;
+        }
+
+        const cartProduct = selectedVariant
+            ? {
+                ...product,
+                variant_id: selectedVariant.id,
+                variant_name: [
+                    selectedVariant.color ? `Color: ${selectedVariant.color}` : "",
+                    selectedVariant.size ? `Size: ${selectedVariant.size}` : "",
+                ].filter(Boolean).join(" · "),
+                price,
+                stock,
+            }
+            : product;
+        const result = addProductToCart(getBuyerCart(), cartProduct, requestedQuantity);
+        if (!result.success) {
+            showMessage(
+                result.reason === "insufficient_stock"
+                    ? `Only ${result.stock} item${result.stock === 1 ? "" : "s"} available.`
+                    : "Unable to add this product to your cart.",
+                "error"
+            );
+            return;
+        }
+
+        if (!saveBuyerCart(result.cart)) {
+            showMessage("Unable to save your cart. Please try again.", "error");
+            return;
+        }
+
+        if (redirectToCheckout) {
+            localStorage.setItem(
+                CHECKOUT_ITEMS_KEY,
+                JSON.stringify([getBuyerCartItemKey(cartProduct)])
+            );
+
+            navigate("/checkout");
+            return;
+        }
+
+        showBuyerToast("Added to cart");
+    };
+
+    const handleBuyNow = () => {
+        addToCart({
+            redirectToCheckout: true,
+        });
+    };
+
+    const contactSeller = async () => {
+        if (!isBuyerSession()) {
+            requestBuyerSignIn({
+                title: "Sign in to contact the seller",
+                message: "Create an account or sign in to ask the seller about this product.",
+                from: window.location.pathname,
+            });
+            return;
+        }
+
+        try {
+            const { data } = await api.post("/buyer/chat/seller-conversations", { product_id: Number(id) });
+            const conversationId = data?.data?.id;
+            if (!conversationId) {
+                throw new Error("Could not open a conversation with this seller.");
+            }
+            window.dispatchEvent(new CustomEvent("cryma-open-seller-chat", { detail: { conversationId } }));
+        } catch (requestError) {
+            showBuyerToast(
+                requestError.response?.data?.message || requestError.message || "Unable to contact this seller right now.",
+                "error"
+            );
+        }
+    };
+
+    const handleSave = () => {
+        if (!isBuyerSession()) {
+            requestBuyerSignIn({
+                title: "Sign in to save favorites",
+                message: "Create an account or sign in to save products to your wishlist.",
+            });
+            return;
+        }
+
+        const wishlist = getBuyerWishlist();
+        const productId = Number(product?.id);
+        const exists = wishlist.some((savedId) => String(savedId) === String(productId));
+        const next = exists
+            ? wishlist.filter((savedId) => String(savedId) !== String(productId))
+            : [...wishlist, productId];
+        if (saveBuyerWishlist(next)) {
+            setSaved(!exists);
+            showBuyerToast(exists ? "Removed from favorites" : "Added to favorites");
+        } else {
+            showBuyerToast("Unable to update favorites. Please try again.", "error");
+        }
+    };
+
+    const decreaseQuantity = () => {
+        setQuantity((current) =>
+            Math.max(
+                1,
+                (Number(current) || 1) - 1
+            )
+        );
+    };
+
+    const increaseQuantity = () => {
+        setQuantity((current) =>
+            Math.min(
+                stock,
+                Math.max(1, Number(current) || 1) + 1
+            )
+        );
+    };
+
+    const selectVariantOption = (field, value) => {
+        const matchingVariants = variants.filter((variant) => String(variant[field] || "") === value);
+        const currentVariant = matchingVariants.find((variant) =>
+            Number(variant.stock) > 0 &&
+            (field === "color"
+                ? String(variant.size || "") === String(selectedVariant?.size || "")
+                : String(variant.color || "") === String(selectedVariant?.color || ""))
+        );
+        const availableVariant = currentVariant || matchingVariants.find((variant) => Number(variant.stock) > 0) || matchingVariants[0];
+        setSelectedVariantId(String(availableVariant?.id || ""));
+        setQuantity(1);
+        setActiveMediaIndex(0);
+    };
+
+    if (loading) {
+        return (
+            <main className="product-details-page">
+                <div className="product-details-loading">
+                    <div className="product-details-loading-image" />
+
+                    <div className="product-details-loading-content">
+                        <span />
+                        <span />
+                        <span />
+                        <span />
+                    </div>
+                </div>
+            </main>
+        );
+    }
+
+    if (error || !product) {
+        return (
+            <main className="product-details-page">
+                <div className="product-details-error">
+                    <span className="product-details-error-icon">
+                        !
+                    </span>
+
+                    <h1>
+                        Product unavailable
+                    </h1>
+
+                    <p>
+                        {error ||
+                            "We couldn't find this product."}
+                    </p>
+
+                    <Link
+                        to="/shop"
+                        className="product-details-error-button"
+                    >
+                        Back to Shop
+                    </Link>
+                </div>
+            </main>
+        );
+    }
+
+    const apiProductMedia = Array.isArray(product.media)
+        ? product.media.filter((media) => media?.url && ["image", "video"].includes(media.type))
+        : [];
+    const fallbackProductMedia = [
+            ...(Array.isArray(product.images)
+                ? product.images.map((image) => typeof image === "string" ? image : image?.url || image?.image_url)
+                : []),
+            product.image,
+        ]
+            .filter((url, index, urls) => typeof url === "string" && url.trim() && urls.indexOf(url) === index)
+            .map((url) => ({ type: "image", url }));
+    const fallbackVideos = Array.isArray(product.videos)
+        ? product.videos.map((video) => typeof video === "string" ? video : video?.url || video?.video_url)
+            .filter((url) => typeof url === "string" && url.trim())
+            .map((url) => ({ type: "video", url }))
+        : [];
+    const productMedia = apiProductMedia.length
+        ? apiProductMedia
+        : [...fallbackProductMedia, ...fallbackVideos];
+    const variantMedia = selectedVariant?.media_url
+        ? { type: selectedVariant.media_type || "image", url: selectedVariant.media_url }
+        : null;
+    const colorPhoto = selectedVariant?.color_image_url;
+    const mediaItems = variantMedia
+        ? [variantMedia, ...productMedia.filter((media) => media.url !== variantMedia.url)]
+        : colorPhoto
+            ? [{ type: "image", url: colorPhoto }, ...productMedia.filter((media) => media.url !== colorPhoto)]
+            : productMedia;
+    const activeMedia = mediaItems[activeMediaIndex] || mediaItems[0] || null;
+    const image = activeMedia?.type === "image" ? activeMedia.url : product.image || null;
+
+    return (
+        <main className="product-details-page">
+            <div className="product-details-container">
+                <Link
+                    to="/shop"
+                    className="product-back-link"
+                >
+                    <ArrowLeft size={15} />
+                    Back to Shopping
+                </Link>
+
+                <div className="product-breadcrumb">
+                    <Link to="/">
+                        Home
+                    </Link>
+
+                    <span>/</span>
+
+                    <Link to="/shop">
+                        {product.category ||
+                            "Products"}
+                    </Link>
+
+                    <span>/</span>
+
+                    <strong>
+                        {product.name}
+                    </strong>
+                </div>
+
+                <section className="product-details-card">
+                    <div className="product-gallery" data-product-id={String(product.id).padStart(4, "0")}>
+                        <div className="product-thumbnails">
+                            {mediaItems.map((media, index) => (
+                                <button
+                                    type="button"
+                                    key={`${media.type}-${media.id || media.url}`}
+                                    className={`product-thumbnail${index === activeMediaIndex ? " active" : ""}`}
+                                    aria-label={`${media.type === "video" ? "Play product video" : "View product photo"} ${index + 1}`}
+                                    aria-pressed={index === activeMediaIndex}
+                                    onClick={() => setActiveMediaIndex(index)}
+                                >
+                                    {media.type === "video" ? <span className="product-video-thumb"><Play size={17} aria-hidden="true" /></span> : <img src={media.url} alt="" />}
+                                </button>
+                            ))}
+                            {!mediaItems.length && (
+                                <div className="product-thumbnail product-thumbnail-placeholder" aria-hidden="true">CRYMA</div>
+                            )}
+                        </div>
+
+                        <div className="product-main-image">
+                            {activeMedia?.type === "video" ? (
+                                <video src={activeMedia.url} controls playsInline preload="metadata" aria-label={`${product.name} product video`} />
+                            ) : image ? (
+                                <img
+                                    src={image}
+                                    alt={
+                                        product.name
+                                    }
+                                />
+                            ) : (
+                                <div className="product-detail-placeholder">
+                                    <strong>
+                                        CRYMA
+                                    </strong>
+
+                                    <span>
+                                        Product image
+                                        unavailable
+                                    </span>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    <div className="product-detail-info">
+                        <div className="product-detail-heading">
+                            <div>
+                                {product.category && (
+                                    <span className="product-detail-category">
+                                        {product.category}
+                                    </span>
+                                )}
+
+                                <h1>
+                                    {product.name}
+                                </h1>
+                            </div>
+
+                            <button
+                                type="button"
+                                className={`product-save-button ${
+                                    saved
+                                        ? "saved"
+                                        : ""
+                                }`}
+                                onClick={
+                                    handleSave
+                                }
+                                aria-label={
+                                    saved
+                                        ? "Remove from wishlist"
+                                        : "Save product"
+                                }
+                                aria-pressed={saved}
+                            >
+                                <Heart
+                                    size={18}
+                                    fill={
+                                        saved
+                                            ? "currentColor"
+                                            : "none"
+                                    }
+                                />
+                            </button>
+                        </div>
+
+                        <div className="product-detail-price">
+                            <strong>
+                                ₱
+                                {price.toLocaleString()}
+                            </strong>
+                            {originalPrice > price && (
+                                <span className="product-detail-sale-price">
+                                    <del>₱{originalPrice.toLocaleString()}</del>
+                                    <b>{Math.round((1 - price / originalPrice) * 100)}% off</b>
+                                </span>
+                            )}
+                        </div>
+
+                        {variants.length > 0 && (
+                            <div className="product-variant-options">
+                                {["color", "size"].filter((field) => variants.some((variant) => variant[field])).map((field) => {
+                                    const options = [...new Set(variants.map((variant) => variant[field]).filter(Boolean))];
+                                    return (
+                                        <fieldset className="product-variant-group" key={field}>
+                                            <legend>{field === "color" ? "Color" : "Size"}</legend>
+                                            <div className="product-variant-buttons">
+                                                {options.map((option) => {
+                                                    const value = String(option);
+                                                    const available = variants.some((variant) =>
+                                                        String(variant[field] || "") === value
+                                                        && Number(variant.stock) > 0
+                                                        && (field !== "size"
+                                                            || !selectedVariant?.color
+                                                            || String(variant.color || "") === String(selectedVariant.color))
+                                                    );
+                                                    const active = String(selectedVariant?.[field] || "") === value;
+                                                    return (
+                                                        <button
+                                                            type="button"
+                                                            key={value}
+                                                            className={active ? "active" : ""}
+                                                            aria-pressed={active}
+                                                            disabled={!available}
+                                                            onClick={() => selectVariantOption(field, value)}
+                                                        >
+                                                            {value}
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        </fieldset>
+                                    );
+                                })}
+                            </div>
+                        )}
+
+                        <div className="product-stock-row">
+                            <span>
+                                Availability
+                            </span>
+
+                            <strong
+                                className={
+                                    stock > 0
+                                        ? "in-stock"
+                                        : "out-of-stock"
+                                }
+                            >
+                                {stock > 0
+                                    ? `${stock} available`
+                                    : "Out of stock"}
+                            </strong>
+                        </div>
+
+                        <section className="product-delivery-estimate" aria-label="Estimated delivery">
+                            <div className="product-delivery-estimate-heading">
+                                <span className="product-delivery-estimate-icon"><Clock3 size={17} aria-hidden="true" /></span>
+                                <div>
+                                    <strong>Estimated delivery</strong>
+                                    <small>Based on the seller-to-buyer route</small>
+                                </div>
+                            </div>
+                            {isBuyerSession() ? (
+                                deliveryAddresses.length > 0 ? (
+                                    <label className="product-delivery-address">
+                                        <span>Deliver to</span>
+                                        <select
+                                            aria-label="Deliver to address"
+                                            value={deliveryAddressId}
+                                            disabled={deliveryAddressLoading}
+                                            onChange={(event) => setDeliveryAddressId(event.target.value)}
+                                        >
+                                            {deliveryAddresses.map((address) => (
+                                                <option key={address.id} value={String(address.id)}>
+                                                    {[address.label, address.municipality, address.province].filter(Boolean).join(" · ")}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </label>
+                                ) : (
+                                    <p className="product-delivery-estimate-message">
+                                        {deliveryAddressLoading
+                                            ? "Loading your delivery address…"
+                                            : <>Add a saved delivery address in <Link to="/account">My Account</Link> to see an estimated arrival date.</>}
+                                    </p>
+                                )
+                            ) : (
+                                <p className="product-delivery-estimate-message">Sign in and add a delivery address to see an estimated arrival date.</p>
+                            )}
+                            {deliveryEstimateLoading ? (
+                                <p className="product-delivery-estimate-result" role="status">Calculating estimated arrival…</p>
+                            ) : deliveryEstimate ? (
+                                <p className="product-delivery-estimate-result" role="status">
+                                    <strong>{formatDeliveryEstimate(deliveryEstimate)}</strong>
+                                    <span>If ordered today · {deliveryEstimate.min_days}–{deliveryEstimate.max_days} business days</span>
+                                </p>
+                            ) : deliveryEstimateMessage ? (
+                                <p className="product-delivery-estimate-message" role="status">{deliveryEstimateMessage}</p>
+                            ) : null}
+                        </section>
+
+                        <div className="product-divider" />
+
+                        <div className="product-quantity">
+                            <label>
+                                Quantity
+                            </label>
+
+                            <div className="product-quantity-control">
+                                <button
+                                    type="button"
+                                    onClick={decreaseQuantity}
+                                    disabled={quantity <= 1}
+                                    aria-label="Decrease quantity"
+                                >
+                                    <Minus size={14} />
+                                </button>
+
+                                <input
+                                    type="number"
+                                    min="1"
+                                    max={stock}
+                                    step="1"
+                                    value={quantity}
+                                    onChange={(event) => {
+                                        const value = Number(event.target.value);
+
+                                        if (event.target.value === "") {
+                                            setQuantity("");
+                                            return;
+                                        }
+
+                                        if (!Number.isFinite(value)) {
+                                            return;
+                                        }
+
+                                        setQuantity(
+                                            Math.min(
+                                                stock,
+                                                Math.max(1, value)
+                                            )
+                                        );
+                                    }}
+                                    onBlur={() => {
+                                        if (!quantity || quantity < 1) {
+                                            setQuantity(1);
+                                        }
+
+                                        if (quantity > stock) {
+                                            setQuantity(stock);
+                                        }
+                                    }}
+                                    aria-label="Product quantity"
+                            />
+
+                                <button
+                                    type="button"
+                                    onClick={increaseQuantity}
+                                    disabled={
+                                        stock <= 0 ||
+                                        quantity >= stock
+                                    }
+                                    aria-label="Increase quantity"
+                                >
+                                    <Plus size={14} />
+                                </button>
+                            </div>
+
+                            {cartQuantity > 0 && (
+                                <span className="product-cart-note">
+                                    {cartQuantity} already
+                                    in cart
+                                </span>
+                            )}
+                        </div>
+
+                        <div className="product-actions">
+                            <button
+                                type="button"
+                                className="product-add-button"
+                                onClick={() =>
+                                    addToCart()
+                                }
+                                disabled={
+                                    stock <= 0 || sellerOnVacation
+                                }
+                            >
+                                <ShoppingCart
+                                    size={15}
+                                />
+                                Add to Cart
+                            </button>
+
+                            <button
+                                type="button"
+                                className="product-buy-button"
+                                onClick={
+                                    handleBuyNow
+                                }
+                                disabled={
+                                    stock <= 0 || sellerOnVacation
+                                }
+                            >
+                                Buy Now
+                            </button>
+                        </div>
+
+                        {sellerOnVacation && <p className="product-vacation-notice" role="status">This seller is on vacation and is not accepting orders right now.</p>}
+
+                        {actionMessage && (
+                            <div className={`product-action-message ${actionMessageType}`} role="status" aria-live="polite">
+                                {actionMessage}
+                            </div>
+                        )}
+
+                        <div className="product-seller-card">
+                            {storeSlug ? (
+                                <Link to={`/stores/${encodeURIComponent(storeSlug)}`} className="product-seller-identity" aria-label={`Visit ${shopName} storefront`}>
+                                    <span className="seller-avatar">{storeLogo ? <img src={storeLogo} alt="" /> : shopName.slice(0, 2).toUpperCase()}</span>
+                                    <span className="product-seller-copy"><span>SELLER STOREFRONT</span><strong>{shopName}</strong></span>
+                                    <span className="product-store-visit">Visit shop <ArrowUpRight size={14} aria-hidden="true" /></span>
+                                </Link>
+                            ) : (
+                                <div className="product-seller-identity">
+                                    <span className="seller-avatar">{storeLogo ? <img src={storeLogo} alt="" /> : shopName.slice(0, 2).toUpperCase()}</span>
+                                    <span className="product-seller-copy"><span>SELLER STOREFRONT</span><strong>{shopName}</strong></span>
+                                </div>
+                            )}
+                            <button type="button" className="product-contact-seller" onClick={contactSeller}>
+                                <MessageCircle size={14} /> Contact seller
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+                <section className="product-detail-tabs">
+                    <nav>
+                        {[
+                            "Description",
+                            "Specifications",
+                            "Reviews",
+                        ].map((tab) => (
+                            <button
+                                type="button"
+                                key={tab}
+                                className={
+                                    activeTab ===
+                                    tab
+                                        ? "active"
+                                        : ""
+                                }
+                                onClick={() =>
+                                    setActiveTab(
+                                        tab
+                                    )
+                                }
+                            >
+                                {tab}
+                            </button>
+                        ))}
+                    </nav>
+
+                    <div className="product-tab-content">
+                        {activeTab === "Description" && (
+                            <p>
+                                {product.description ||
+                                    "No product description has been provided."}
+                            </p>
+                        )}
+
+                        {activeTab === "Specifications" && (
+                            <div className="product-specifications">
+                                <div>
+                                    <span>
+                                        Category
+                                    </span>
+
+                                    <strong>
+                                        {product.category ||
+                                            "Not specified"}
+                                    </strong>
+                                </div>
+
+                                <div>
+                                    <span>
+                                        Stock
+                                    </span>
+
+                                    <strong>
+                                        {stock > 0
+                                            ? `${stock} available`
+                                            : "Out of stock"}
+                                    </strong>
+                                </div>
+
+                                <div>
+                                    <span>
+                                        Shop
+                                    </span>
+
+                                    <strong>
+                                        {shopName}
+                                    </strong>
+                                </div>
+                            </div>
+                        )}
+
+                        {activeTab === "Reviews" && (
+                            <div className="product-reviews">
+                                <div className="product-reviews-summary">
+                                    <div className="product-review-average">
+                                        <strong>
+                                            {reviewSummary.averageRating
+                                                ? reviewSummary.averageRating.toFixed(
+                                                    1
+                                                )
+                                                : "0.0"}
+                                        </strong>
+
+                                        <div>
+                                            <div className="product-review-stars">
+                                                {[1, 2, 3, 4, 5].map(
+                                                    (star) => (
+                                                        <Star
+                                                            key={star}
+                                                            size={14}
+                                                            fill={
+                                                                star <=
+                                                                Math.round(
+                                                                    reviewSummary.averageRating
+                                                                )
+                                                                    ? "currentColor"
+                                                                    : "none"
+                                                            }
+                                                        />
+                                                    )
+                                                )}
+                                            </div>
+
+                                            <span>
+                                                {reviewSummary.reviewCount}{" "}
+                                                {reviewSummary.reviewCount ===
+                                                1
+                                                    ? "review"
+                                                    : "reviews"}
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    <button
+                                        type="button"
+                                        className="product-review-link"
+                                        onClick={() => {
+                                            if (isBuyerSession()) navigate("/reviews");
+                                            else requestBuyerSignIn({
+                                                title: "Sign in to leave a review",
+                                                message: "Create an account or sign in to share your product experience.",
+                                            });
+                                        }}
+                                    >
+                                        Leave a Review
+                                    </button>
+                                </div>
+
+                                {reviewsLoading ? (
+                                    <div className="product-reviews-empty">
+                                        Loading reviews...
+                                    </div>
+                                ) : reviews.length === 0 ? (
+                                    <div className="product-reviews-empty">
+                                        <strong>
+                                            No reviews yet
+                                        </strong>
+
+                                        <span>
+                                            Be the first buyer to share
+                                            your experience.
+                                        </span>
+                                    </div>
+                                ) : (
+                                    <div className="product-review-list">
+                                        {reviews.map((review) => {
+                                            const firstName =
+                                                review.buyer
+                                                    ?.first_name || "";
+
+                                            const lastName =
+                                                review.buyer
+                                                    ?.last_name || "";
+
+                                            const buyerName =
+                                                `${firstName} ${lastName}`
+                                                    .trim() ||
+                                                "Buyer";
+
+                                            return (
+                                                <article
+                                                    className="product-review-item"
+                                                    key={review.id}
+                                                >
+                                                    <div className="product-review-top">
+                                                        <strong>
+                                                            {buyerName}
+                                                        </strong>
+
+                                                        <span>
+                                                            {review.created_at
+                                                                ? new Date(
+                                                                    review.created_at
+                                                                ).toLocaleDateString(
+                                                                    "en-PH"
+                                                                )
+                                                                : ""}
+                                                        </span>
+                                                    </div>
+
+                                                    <div className="product-review-stars">
+                                                        {[1, 2, 3, 4, 5].map(
+                                                            (star) => (
+                                                                <Star
+                                                                    key={
+                                                                        star
+                                                                    }
+                                                                    size={12}
+                                                                    fill={
+                                                                        star <=
+                                                                        Number(
+                                                                            review.rating
+                                                                        )
+                                                                            ? "currentColor"
+                                                                            : "none"
+                                                                    }
+                                                                />
+                                                            )
+                                                        )}
+                                                    </div>
+
+                                                    {review.comment && (
+                                                        <p>
+                                                            {
+                                                                review.comment
+                                                            }
+                                                        </p>
+                                                    )}
+                                                </article>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                </section>
+            </div>
+        </main>
+    );
+}
+
+export default ProductDetails;
